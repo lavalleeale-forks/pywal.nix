@@ -38,15 +38,18 @@
                   buildInputs = with pkgs; [
                     imagemagick
                     jq
-                    python312Packages.colorthief
+                    python3Packages.colorthief
                     colorz
-                    python312Packages.pillow
-                    python312Packages.numpy
+                    python3Packages.pillow
+                    python3Packages.numpy
                     (pkgs.python3.withPackages (ps: [
                       (ps.buildPythonPackage rec {
                         pname = "haishoku";
                         version = "1.1.8";
                         doCheck = false;
+                        pyproject = true;
+                        build-system = [ ps.setuptools ];
+                        dependencies = [ ps.pillow ];
 
                         src = ps.fetchPypi {
                           inherit pname version;
@@ -57,14 +60,27 @@
                         pname = "fast_colorthief";
                         version = "0.0.5";
                         doCheck = false;
+                        pyproject = true;
                         dontUseCmakeConfigure = true;
+                        build-system = [
+                          ps.setuptools
+                          ps.setuptools-scm
+                          ps.scikit-build
+                        ];
+                        dependencies = [
+                          ps.numpy
+                          ps.pillow
+                        ];
 
                         nativeBuildInputs = [
                           pkgs.cmake
-                          ps.setuptools
-                          ps.setuptools_scm
-                          ps.scikit-build
                         ];
+
+                        postPatch = ''
+                          find . -name CMakeLists.txt -exec sed -i \
+                            's/cmake_minimum_required(VERSION .*)/cmake_minimum_required(VERSION 3.5)/' \
+                            '{}' +
+                        '';
 
                         src = pkgs.fetchgit {
                           url = "https://github.com/bedapisl/fast-colorthief";
@@ -194,6 +210,52 @@
           statix.enable = true;
         };
       };
+
+      checks.home-manager-module =
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+          inherit (pkgs) lib;
+
+          testWallpaper =
+            pkgs.runCommand "pywal-nix-test-wallpaper.png"
+              {
+                nativeBuildInputs = [ pkgs.imagemagick ];
+              }
+              ''
+                magick -size 64x64 xc:'#112233' \
+                  -fill '#445566' -draw 'rectangle 32,0 63,31' \
+                  -fill '#778899' -draw 'rectangle 0,32 31,63' \
+                  -fill '#cc8844' -draw 'rectangle 32,32 63,63' \
+                  PNG32:$out
+              '';
+
+          evaluatedModule = lib.evalModules {
+            modules = [
+              self.homeManagerModules.${system}.default
+              {
+                options.programs.kitty = {
+                  enable = lib.mkEnableOption "kitty";
+                  extraConfig = lib.mkOption {
+                    type = lib.types.lines;
+                    default = "";
+                  };
+                };
+              }
+              {
+                programs.kitty.enable = true;
+
+                pywal-nix.wallpaper = testWallpaper;
+              }
+            ];
+          };
+        in
+        pkgs.runCommand "pywal-nix-home-manager-module-check" { } ''
+          test "${evaluatedModule.config.pywal-nix.colorScheme.special.background}" = "${evaluatedModule.config.pywal-nix.colourScheme.colours.colour0}"
+          test "${evaluatedModule.config.pywal-nix.colorScheme.special.foreground}" = "${evaluatedModule.config.pywal-nix.colourScheme.colours.colour15}"
+          test -n "${evaluatedModule.config.programs.kitty.extraConfig}"
+
+          touch "$out"
+        '';
 
       devShells.default = nixpkgs.legacyPackages.${system}.mkShell {
         inherit (self.checks.${system}.pre-commit-check) shellHook;
